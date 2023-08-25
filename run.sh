@@ -1,0 +1,1 @@
+ java -cp "./target/tcdb-cli-0.0.1.jar" org.yugoccp.sksamples.TcdbCli ./config.properties

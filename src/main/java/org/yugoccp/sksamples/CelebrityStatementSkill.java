@@ -3,16 +3,20 @@ package org.yugoccp.sksamples;
 import com.azure.ai.openai.OpenAIAsyncClient;
 import com.microsoft.semantickernel.Kernel;
 import com.microsoft.semantickernel.SKBuilders;
-import com.microsoft.semantickernel.orchestration.SKContext;
+import com.microsoft.semantickernel.orchestration.ContextVariables;
 import com.microsoft.semantickernel.semanticfunctions.PromptTemplateConfig;
 import com.microsoft.semantickernel.textcompletion.CompletionSKFunction;
-import reactor.core.publisher.Mono;
+
+import java.util.Objects;
 
 public class CelebrityStatementSkill {
-    private final OpenAIAsyncClient client;
+    private final CompletionSKFunction myFunction;
+    private final Kernel myKernel;
+    private String contextHistory = "";
 
     public CelebrityStatementSkill(OpenAIAsyncClient client) {
-        this.client = client;
+        this.myKernel = getKernel(client);
+        this.myFunction = buildFunction(myKernel);
     }
 
     private Kernel getKernel(OpenAIAsyncClient client) {
@@ -24,36 +28,51 @@ public class CelebrityStatementSkill {
                 .build();
     }
 
-    public Mono<SKContext> run(String inputText) {
-        Kernel kernel = getKernel(client);
+    public String run(String inputText) {
+        var newContext = ContextVariables.builder()
+                .withVariable("history", contextHistory)
+                .withVariable("input", inputText)
+                .build();
+
+        var skContext = myKernel.runAsync(newContext, myFunction);
+        var result = Objects.requireNonNull(skContext.block()).getResult();
+
+        contextHistory =  contextHistory + String.format("\\nUser: %s\\nChatBot: %s\\n", inputText, result);
+
+        return result;
+    }
+
+    private static CompletionSKFunction buildFunction(Kernel kernel) {
         String semanticFunctionInline = """
-            Given that:
-            - [people] = the specific people ou want to meet and associate with
-            - [this] = it's what you do, what you are or want to be an expert at
-            - [that] = it's what [people] want. What is that they want more?
-            
             A Celebrity Statement strictly follow the structure: I help [people] to do [this] so they can have/become [that]
             
-            Incorporate related topics to [this], use visceral verbs to [that], and generate a meaningful Celebrity Statement from the description below:
+            Where:
+            - [people] = is the specific people ou want to meet, people that you want to become friends, associate with, work together, or do significant things together
+            - [this] = it's all the things that you do well, and that you LOVE to do, or that you would like to become, and that can help [people].
+            - [that] = it's what [people] strongly want to become or what [people] strongly want to have?
+            
+            ChatBot is an expert in identifying all the Celebrity Statement components ([people], [this] and [that]), 
+            and can have a consistent conversation with User to ask relevant questions to collect information from User
+            to generate a meaningful Celebrity Statement.
+             
+            When ChatBot have enough information to create a Celebrity Statement incorporating related topics to [this], and using visceral verbs to [that], give the result as an answer 
          
-            {{$input}}
-            """;
+            {{$history}}
+            User: {{$input}}
+            ChatBot: """;
 
         var promptConfig = new PromptTemplateConfig(
                 new PromptTemplateConfig.CompletionConfigBuilder()
-                        .maxTokens(100)
-                        .temperature(0.6)
+                        .maxTokens(1000)
+                        .temperature(0.8)
                         .topP(1)
                         .build());
 
-        CompletionSKFunction summarizeFunction = SKBuilders
+        return SKBuilders
                 .completionFunctions()
                 .withKernel(kernel)
                 .setPromptTemplateConfig(promptConfig)
                 .setPromptTemplate(semanticFunctionInline)
                 .build();
-
-        return summarizeFunction.invokeAsync(inputText);
-
     }
 }
